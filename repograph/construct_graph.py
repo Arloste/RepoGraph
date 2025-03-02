@@ -30,7 +30,7 @@ warnings.simplefilter("ignore", category=FutureWarning)
 from tree_sitter_languages import get_language, get_parser
 
 Tag = namedtuple("Tag", "rel_fname fname line name kind category info".split())
-
+DATA = list()
 
 class CodeGraph:
 
@@ -79,6 +79,20 @@ class CodeGraph:
             target = 0
 
         tags = self.get_tag_files(other_files, mentioned_fnames)
+
+        unique_tags = list()
+        unique_tag_ids = set()
+        for tag in tags:
+            tag_line = tag.line if isinstance(tag.line, int) else (tag.line[0], tag.line[1])
+            tag_id = (tag.fname, tag_line)
+            if tag_id not in unique_tag_ids:
+                unique_tag_ids.add(tag_id)
+                unique_tags.append(tag)
+
+        tags = unique_tags[:]
+        # tags = list(set(tags))
+
+
         code_graph = self.tag_to_graph(tags)
 
         return tags, code_graph
@@ -96,20 +110,23 @@ class CodeGraph:
         
         G = nx.MultiDiGraph()
         for tag in tags:
-            G.add_node(tag['name'], category=tag['category'], info=tag['info'], fname=tag['fname'], line=tag['line'], kind=tag['kind'])
+            # G.add_node(tag['name'], category=tag['category'], info=tag['info'], fname=tag['fname'], line=tag['line'], kind=tag['kind'])
+            G.add_node(tag.name, category=tag.category, info=tag.info, fname=tag.fname, line=tag.line, kind=tag.kind)
 
         for tag in tags:
-            if tag['category'] == 'class':
-                class_funcs = tag['info'].split('\t')
+            # if tag['category'] == 'class':
+            #     class_funcs = tag['info'].split('\t')
+            if tag.category == 'class':
+                class_funcs = tag.info.split('\t')
                 for f in class_funcs:
-                    G.add_edge(tag['name'], f.strip())
+                    G.add_edge(tag.name, f.strip())
 
-        tags_ref = [tag for tag in tags if tag['kind'] == 'ref']
-        tags_def = [tag for tag in tags if tag['kind'] == 'def']
+        tags_ref = [tag for tag in tags if tag.kind == 'ref']
+        tags_def = [tag for tag in tags if tag.kind == 'def']
         for tag in tags_ref:
             for tag_def in tags_def:
-                if tag['name'] == tag_def['name']:
-                    G.add_edge(tag['name'], tag_def['name'])
+                if tag.name == tag_def.name:
+                    G.add_edge(tag.name, tag_def.name)
         return G
 
     def get_rel_fname(self, fname):
@@ -202,7 +219,6 @@ class CodeGraph:
                             continue
                         std_funcs.extend([name for name, member in inspect.getmembers(eval(eval_name)) if callable(member)])
         return std_funcs, std_libs
-                    
 
     def get_tags(self, fname, rel_fname):
         # Check if the file is in the cache and if the modification time has not changed
@@ -210,19 +226,22 @@ class CodeGraph:
         if file_mtime is None:
             return []
         # miss!
-        data = list(self.get_tags_raw(fname, rel_fname))
-        return data
+    
+        for item in self.get_tags_raw(fname, rel_fname):
+            DATA.append(item)
+        return DATA
 
     def get_tags_raw(self, fname, rel_fname):
         ref_fname_lst = rel_fname.split('/')
         s = deepcopy(self.structure)
         for fname_part in ref_fname_lst:
+            if fname_part not in s: continue
             s = s[fname_part]
-        structure_classes = {item['name']: item for item in s['classes']}
-        structure_functions = {item['name']: item for item in s['functions']}
+        structure_classes = {item['name']: item for item in s.get('classes', [])}
+        structure_functions = {item['name']: item for item in s.get('functions', [])}
         structure_class_methods = dict()
-        for cls in s['classes']:
-            for item in cls['methods']:
+        for cls in s.get('classes', []):
+            for item in cls.get('methods', []):
                 structure_class_methods[item['name']] = item
         structure_all_funcs = {**structure_functions, **structure_class_methods}
 
@@ -320,38 +339,50 @@ class CodeGraph:
             tag_name = node.text.decode("utf-8")
             
             #  we only want to consider project-dependent functions
-            if tag_name in std_funcs:
-                continue
-            elif tag_name in std_libs:
-                continue
-            elif tag_name in builtins_funs:
-                continue
+            # if tag_name in std_funcs:
+            #     continue
+            # elif tag_name in std_libs:
+            #     continue
+            # elif tag_name in builtins_funs:
+            #     continue
 
             if category == 'class':
-                # try:
-                #     class_functions = self.get_class_functions(tree_ast, tag_name)
-                # except:
-                #     class_functions = "None"
-                class_functions = [item['name'] for item in structure_classes[tag_name]['methods']]
-                if kind == 'def':
-                    line_nums = [structure_classes[tag_name]['start_line'], structure_classes[tag_name]['end_line']]
+                if tag_name in structure_classes:
+                    class_functions = [item['name'] for item in structure_classes[tag_name]['methods']]
+                    if kind == 'def':
+                        line_nums = [structure_classes[tag_name]['start_line'], structure_classes[tag_name]['end_line']]
+                    else:
+                        line_nums = [node.start_point[0], node.end_point[0]]
+                    result = Tag(
+                        rel_fname=rel_fname,
+                        fname=fname,
+                        name=tag_name,
+                        kind=kind,
+                        category=category,
+                        info='\n'.join(class_functions), # list unhashable, use string instead
+                        line=line_nums,
+                    )
+            
                 else:
-                    line_nums = [node.start_point[0], node.end_point[0]]
-                result = Tag(
-                    rel_fname=rel_fname,
-                    fname=fname,
-                    name=tag_name,
-                    kind=kind,
-                    category=category,
-                    info='\n'.join(class_functions), # list unhashable, use string instead
-                    line=line_nums,
-                )
+                    # If the class is not in structure_classes, we'll create a basic Tag
+                    result = Tag(
+                        rel_fname=rel_fname,
+                        fname=fname,
+                        name=tag_name,
+                        kind=kind,
+                        category=category,
+                        info="Class not found in structure",
+                        line=[node.start_point[0], node.end_point[0]],
+                    )
 
             elif category == 'function':
-
-                if kind == 'def':
-                    # func_block = self.get_func_block(cur_cdl, code)
-                    # cur_cdl =func_block
+                if kind == "def":
+                    for item in DATA[::-1]:
+                        if item.category == "class":
+                            if tag_name in item.info:
+                                tag_name = f"{item.name}.{tag_name}"
+                            break
+                if kind == 'def' and tag_name in structure_all_funcs:
                     cur_cdl = '\n'.join(structure_all_funcs[tag_name]['text'])
                     line_nums = [structure_all_funcs[tag_name]['start_line'], structure_all_funcs[tag_name]['end_line']]
                 else:
@@ -438,12 +469,13 @@ class CodeGraph:
             if fname in mentioned_fnames:
                 personalization[rel_fname] = personalize
             
+            DATA = list()
             tags = list(self.get_tags(fname, rel_fname))
-
-            tags_of_files.extend(tags)
 
             if tags is None:
                 continue
+
+            tags_of_files.extend(tags)
 
         return tags_of_files
     

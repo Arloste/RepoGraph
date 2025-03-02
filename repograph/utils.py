@@ -56,14 +56,17 @@ def parse_python_file(file_path, file_content=None):
     function_names = []
     class_methods = set()
 
+    processed_lines_start = set()
+
     for node in ast.walk(parsed_data):
         if isinstance(node, ast.ClassDef):
             methods = []
             for n in node.body:
                 if isinstance(n, ast.FunctionDef):
+                    processed_lines_start.add(n.lineno)
                     methods.append(
                         {
-                            "name": n.name,
+                            "name": f"{node.name}.{n.name}",
                             "start_line": n.lineno,
                             "end_line": n.end_lineno,
                             "text": file_content.splitlines()[
@@ -71,7 +74,7 @@ def parse_python_file(file_path, file_content=None):
                             ],
                         }
                     )
-                    class_methods.add(n.name)
+                    class_methods.add(f"{node.name}.{n.name}")
             class_info.append(
                 {
                     "name": node.name,
@@ -86,7 +89,8 @@ def parse_python_file(file_path, file_content=None):
         elif isinstance(node, ast.FunctionDef) and not isinstance(
             node, ast.AsyncFunctionDef
         ):
-            if node.name not in class_methods:
+            if node.name not in class_methods and node.lineno not in processed_lines_start:
+                processed_lines_start.add(node.lineno)
                 function_names.append(
                     {
                         "name": node.name,
