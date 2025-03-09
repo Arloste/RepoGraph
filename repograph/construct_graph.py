@@ -276,10 +276,14 @@ class CodeGraph:
         #     return
         # query_scm = query_scm.read_text()
 
-        with open(str(fname), "r", encoding='utf-8') as f:
-            code = f.read()
-        with open(str(fname), "r", encoding='utf-8') as f:    
-            codelines = f.readlines()
+        try:
+            with open(str(fname), "r", encoding='utf-8') as f:
+                code = f.read()
+            with open(str(fname), "r", encoding='utf-8') as f:    
+                codelines = f.readlines()
+        except Exception as e:
+            print(f"Couldn't process {fname}. Error:\n{e}")
+            return
 
         # hard-coded edge cases
         code = code.replace('\ufeff', '')
